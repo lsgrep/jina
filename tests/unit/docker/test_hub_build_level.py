@@ -12,27 +12,12 @@ from jina.parser import set_hub_build_parser
 
 cur_dir = Path.cwd()
 
-def test_hub_build_pull():
-    args = set_hub_build_parser().parse_args([os.path.join(cur_dir, 'hub-mwu'), '--push', '--host-info', '--test-level', 'FLOW'])
+@pytest.mark.parametrize("test_level, expected_failed_levels", [('FLOW', [BuildTestLevel.EXECUTOR, BuildTestLevel.POD_NONDOCKER, BuildTestLevel.FLOW]),
+('EXECUTOR', [BuildTestLevel.EXECUTOR]),
+('POD_DOCKER', [BuildTestLevel.EXECUTOR, BuildTestLevel.POD_NONDOCKER]),
+('POD_NONDOCKER', [BuildTestLevel.EXECUTOR, BuildTestLevel.POD_NONDOCKER])])
+def test_hub_build_pull(test_level, expected_failed_levels):
+    args = set_hub_build_parser().parse_args([os.path.join(cur_dir, 'hub-mwu'), '--push', '--host-info', '--test-level', test_level])
     p_names, failed_levels = HubIO(args)._test_build("jinahub/pod.dummy_mwu_encoder")
 
-    expected_failed_levels = [BuildTestLevel.EXECUTOR, BuildTestLevel.POD_NONDOCKER, BuildTestLevel.FLOW]
-    assert expected_failed_levels == failed_levels
-
-    args = set_hub_build_parser().parse_args([os.path.join(cur_dir, 'hub-mwu'), '--push', '--host-info', '--test-level', 'EXECUTOR'])
-    p_names, failed_levels = HubIO(args)._test_build("jinahub/pod.dummy_mwu_encoder")
-
-    expected_failed_levels = [BuildTestLevel.EXECUTOR]
-    assert expected_failed_levels == failed_levels
-
-    args = set_hub_build_parser().parse_args([os.path.join(cur_dir, 'hub-mwu'), '--push', '--host-info', '--test-level', 'POD_DOCKER'])
-    p_names, failed_levels = HubIO(args)._test_build("jinahub/pod.dummy_mwu_encoder")
-
-    expected_failed_levels = [BuildTestLevel.EXECUTOR, BuildTestLevel.POD_NONDOCKER]
-    assert expected_failed_levels == failed_levels
-
-    args = set_hub_build_parser().parse_args([os.path.join(cur_dir, 'hub-mwu'), '--push', '--host-info', '--test-level', 'POD_NONDOCKER'])
-    p_names, failed_levels = HubIO(args)._test_build("jinahub/pod.dummy_mwu_encoder")
-
-    expected_failed_levels = [BuildTestLevel.EXECUTOR, BuildTestLevel.POD_NONDOCKER]
     assert expected_failed_levels == failed_levels
