@@ -34,6 +34,48 @@ def test_numpy_indexer(batch_size, compress_level, test_metas):
         assert idx.shape == (num_query, 4)
 
 
+@pytest.mark.parametrize('batch_size, compress_level', [(None, 0), (None, 1), (2, 0), (2, 1)])
+def test_numpy_delete(batch_size, compress_level, test_metas):
+    np.random.seed(500)
+    num_dim = 3
+    vec_idx = np.array([12, 112, 903])
+    keys_to_delete = 1
+    vec = np.random.random([len(vec_idx), num_dim])
+
+    with NumpyIndexer(metric='euclidean', index_filename='np.test.gz', compress_level=compress_level,
+                      metas=test_metas) as indexer:
+        indexer.add(vec_idx, vec)
+        indexer.save()
+        assert indexer.num_dim == num_dim
+        assert indexer.size() == len(vec_idx)
+        assert Path(indexer.index_abspath).exists()
+        save_abspath = indexer.save_abspath
+
+    with BaseIndexer.load(save_abspath) as indexer:
+        assert isinstance(indexer, NumpyIndexer)
+        query_results = indexer.query_by_id(vec_idx)
+        assert np.array_equal(vec, query_results)
+
+    with BaseIndexer.load(save_abspath) as indexer:
+        assert isinstance(indexer, NumpyIndexer)
+        indexer.delete(vec_idx[:keys_to_delete])
+        indexer.save()
+        assert indexer.size() == len(vec_idx) - keys_to_delete
+
+    assert indexer.size() == len(vec_idx) - keys_to_delete
+
+    with BaseIndexer.load(save_abspath) as indexer:
+        assert indexer.size() == len(vec_idx) - keys_to_delete
+        query_results = indexer.query_by_id(vec_idx)
+        empty = np.array([np.full((indexer.num_dim), np.nan, dtype=indexer.dtype)]*keys_to_delete)
+        expected = np.vstack([empty, vec[keys_to_delete:]])
+        # this will fail
+        # so the problem is that when we delete the key from the self.keys_bytes the indices are offset in the int2ext_id
+        # instead we need to set it to point to None in that dictionary mapping somehow
+        # so I still think we need to add a __set__ to the cached_property decorator
+        assert np.array_equal(query_results, expected)
+
+
 @pytest.mark.parametrize('batch_size, compress_level', [(None, 0), (None, 1), (16, 0), (16, 1)])
 def test_numpy_indexer_known(batch_size, compress_level, test_metas):
     vectors = np.array([[1, 1, 1],

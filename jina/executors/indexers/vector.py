@@ -5,7 +5,7 @@ import gzip
 import os
 from functools import lru_cache
 from os import path
-from typing import Optional, List, Union, Tuple, Dict
+from typing import Optional, List, Union, Tuple, Dict, Iterator
 
 import numpy as np
 
@@ -15,11 +15,11 @@ from ...helper import cached_property
 
 
 class BaseNumpyIndexer(BaseVectorIndexer):
-    """:class:`BaseNumpyIndexer` stores and loads vector in a compresses binary file
+    """:class:`BaseNumpyIndexer` stores and loads vector in a compressed binary file
 
     .. note::
         :attr:`compress_level` balances between time and space. By default, :classL`NumpyIndexer` has
-        :attr:`compress_level` = 0.
+        :attr:`compress_level` = 1.
 
         Setting :attr:`compress_level`>0 gives a smaller file size on the disk in the index time. However, in the query
         time it loads all data into memory at once. Not ideal for large scale application.
@@ -38,7 +38,7 @@ class BaseNumpyIndexer(BaseVectorIndexer):
         :param compress_level: The compresslevel argument is an integer from 0 to 9 controlling the
                         level of compression; 1 is fastest and produces the least compression,
                         and 9 is slowest and produces the most compression. 0 is no compression
-                        at all. The default is 9.
+                        at all. The default is 1.
         :param ref_indexer: Bootstrap the current indexer from a ``ref_indexer``. This enables user to switch
                             the query algorithm at the query time.
 
@@ -156,11 +156,14 @@ class BaseNumpyIndexer(BaseVectorIndexer):
             self.logger.success(f'memmap is enabled for {self.index_abspath}')
             return np.memmap(self.index_abspath, dtype=self.dtype, mode='r', shape=(self.size, self.num_dim))
 
-    def query_by_id(self, ids: Union[List[int], 'np.ndarray'], *args, **kwargs) -> 'np.ndarray':
-        int_ids = [self.ext2int_id[j] for j in ids]
-        return self.raw_ndarray[int_ids]
+    def query_by_id(self, keys: Union[List[int], 'np.ndarray'], *args, **kwargs) -> 'np.ndarray':
+        existing_keys = np.frombuffer(self.key_bytes, dtype=self.key_dtype)
+        # FIXME add periodic gc. data is still there but the key is deleted
+        nan_array = np.full((self.num_dim), np.nan, dtype=self.dtype)
+        arrays = np.array(
+            [self.raw_ndarray[self.ext2int_id()[id]] if id in existing_keys else nan_array for id in keys])
+        return arrays
 
-    @cached_property
     def int2ext_id(self) -> Optional['np.ndarray']:
         """Convert internal ids (0,1,2,3,4,...) to external ids (random index) """
         if self.key_bytes and self.key_dtype:
@@ -173,11 +176,29 @@ class BaseNumpyIndexer(BaseVectorIndexer):
                     f'({r.shape[0]}, {self._size}, {self.raw_ndarray.shape[0]}), '
                     f'did you write to this index twice? or did you forget to save indexer?')
 
-    @cached_property
     def ext2int_id(self) -> Optional[Dict]:
         """Convert external ids (random index) to internal ids (0,1,2,3,4,...) """
-        if self.int2ext_id is not None:
-            return {k: idx for idx, k in enumerate(self.int2ext_id)}
+        if self.int2ext_id() is not None:
+            return {k: idx for idx, k in enumerate(self.int2ext_id())}
+
+    # TODO
+    # def update(self, keys: Iterator[int], values: Iterator[bytes], *args, **kwargs):
+    #     int_ids = [self.ext2int_id[j] for j in keys]
+    #     # mask?
+    #     self.raw_ndarray[int_ids] = values
+
+    def delete(self, keys: Iterator[int], *args, **kwargs):
+        # delete key from keys?
+        # FIXME instead of doing this we need to map the key in int2ext_id to a `None`.
+        # HOWEVER, that will make calculating size (if we depend the keys) more complicated
+        remaining_keys = np.array([k for k in np.frombuffer(self.key_bytes, dtype=self.key_dtype) if k not in keys])
+        # how do we save this to disk
+        self.key_bytes = remaining_keys.tobytes()
+        self._size = len(remaining_keys)
+        self.touch()
+        #
+        # del self.ext2int_id
+        # del self.int2ext_id()
 
 
 @lru_cache(maxsize=3)
@@ -260,7 +281,8 @@ class NumpyIndexer(BaseNumpyIndexer):
 
         return idx, dist
 
-    def query(self, keys: 'np.ndarray', top_k: int, *args, **kwargs) -> Tuple[Optional['np.ndarray'], Optional['np.ndarray']]:
+    def query(self, keys: 'np.ndarray', top_k: int, *args, **kwargs) -> Tuple[
+        Optional['np.ndarray'], Optional['np.ndarray']]:
         """ Find the top-k vectors with smallest ``metric`` and return their ids in ascending order.
 
         :return: a tuple of two ndarray.
@@ -286,7 +308,7 @@ class NumpyIndexer(BaseNumpyIndexer):
             raise NotImplementedError(f'{self.metric} is not implemented')
 
         idx, dist = self._get_sorted_top_k(dist, top_k)
-        return self.int2ext_id[idx], dist
+        return self.int2ext_id()[idx], dist
 
     def build_advanced_index(self, vecs: 'np.ndarray'):
         return vecs
