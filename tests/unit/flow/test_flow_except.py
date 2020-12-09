@@ -10,7 +10,7 @@ class DummyCrafter(BaseCrafter):
         return 1 / 0
 
 
-def test_bad_flow():
+def test_bad_flow(mocker):
     def validate(req):
         bad_routes = [r for r in req.routes if r.status.code == jina_pb2.StatusProto.ERROR]
         assert req.status.code == jina_pb2.StatusProto.ERROR
@@ -26,7 +26,7 @@ def test_bad_flow():
         f.index_lines(lines=['abbcs', 'efgh'], output_fn=validate)
 
 
-def test_bad_flow_customized():
+def test_bad_flow_customized(mocker):
     def validate(req):
         bad_routes = [r for r in req.routes if r.status.code == jina_pb2.StatusProto.ERROR]
         assert req.status.code == jina_pb2.StatusProto.ERROR
@@ -40,13 +40,19 @@ def test_bad_flow_customized():
     with f:
         f.dry_run()
 
+    response_mock = mocker.Mock(wrap=validate)
+    response_mock_2 = mocker.Mock(wrap=validate)
+
     # always test two times, make sure the flow still works after it fails on the first
     with f:
-        f.index_lines(lines=['abbcs', 'efgh'], output_fn=validate)
-        f.index_lines(lines=['abbcs', 'efgh'], output_fn=validate)
+        f.index_lines(lines=['abbcs', 'efgh'], output_fn=response_mock)
+        f.index_lines(lines=['abbcs', 'efgh'], output_fn=response_mock_2)
+
+    response_mock.assert_called()
+    response_mock_2.assert_called()
 
 
-def test_except_with_parallel():
+def test_except_with_parallel(mocker):
     def validate(req):
         assert req.status.code == jina_pb2.StatusProto.ERROR
         err_routes = [r.status for r in req.routes if r.status.code == jina_pb2.StatusProto.ERROR]
@@ -63,12 +69,19 @@ def test_except_with_parallel():
     with f:
         f.dry_run()
 
+    response_mock = mocker.Mock(wrap=validate)
+    response_mock_2 = mocker.Mock(wrap=validate)
+
+    # always test two times, make sure the flow still works after it fails on the first
     with f:
-        f.index_lines(lines=['abbcs', 'efgh'], output_fn=validate)
-        f.index_lines(lines=['abbcs', 'efgh'], output_fn=validate)
+        f.index_lines(lines=['abbcs', 'efgh'], output_fn=response_mock)
+        f.index_lines(lines=['abbcs', 'efgh'], output_fn=response_mock_2)
+
+    response_mock.assert_called()
+    response_mock_2.assert_called()
 
 
-def test_on_error_callback():
+def test_on_error_callback(mocker):
     def validate1():
         raise NotImplementedError
 
@@ -81,11 +94,17 @@ def test_on_error_callback():
     f = (Flow().add(name='r1')
          .add(name='r3', uses='!BaseEncoder'))
 
+    response_mock = mocker.Mock(wrap=validate1)
+    on_error_mock = mocker.Mock(wrap=validate2)
+
     with f:
-        f.index_lines(lines=['abbcs', 'efgh'], output_fn=validate1, on_error=validate2)
+        f.index_lines(lines=['abbcs', 'efgh'], output_fn=response_mock, on_error=on_error_mock)
+
+    response_mock.assert_called()
+    on_error_mock.assert_called()
 
 
-def test_no_error_callback():
+def test_no_error_callback(mocker):
     def validate2():
         raise NotImplementedError
 
@@ -95,11 +114,17 @@ def test_no_error_callback():
     f = (Flow().add(name='r1')
          .add(name='r3'))
 
+    response_mock = mocker.Mock(wrap=validate1)
+    on_error_mock = mocker.Mock(wrap=validate2)
+
     with f:
-        f.index_lines(lines=['abbcs', 'efgh'], output_fn=validate1, on_error=validate2)
+        f.index_lines(lines=['abbcs', 'efgh'], output_fn=response_mock, on_error=on_error_mock)
+
+    response_mock.assert_called()
+    on_error_mock.assert_not_called()
 
 
-def test_flow_on_callback():
+def test_flow_on_callback(mocker):
     f = Flow().add()
     hit = []
 
@@ -112,15 +137,24 @@ def test_flow_on_callback():
     def f3(*args):
         hit.append('always')
 
+    response_mock = mocker.Mock(wrap=f1)
+    on_error_mock = mocker.Mock(wrap=f2)
+    on_always_mock = mocker.Mock(wrap=f3)
+
     with f:
         f.index(np.random.random([10, 10]),
-                output_fn=f1, on_error=f2, on_always=f3)
+                output_fn=response_mock, on_error=on_error_mock, on_always=on_always_mock)
 
     assert hit == ['done', 'always']
 
+    response_mock.assert_called()
+    on_error_mock.assert_not_called()
+    on_always_mock.assert_called()
+
     hit.clear()
 
-def test_flow_on_error_callback():
+
+def test_flow_on_error_callback(mocker):
 
     class DummyCrafter(BaseCrafter):
         def craft(self, *args, **kwargs):
@@ -138,10 +172,18 @@ def test_flow_on_error_callback():
     def f3(*args):
         hit.append('always')
 
+    response_mock = mocker.Mock(wrap=f1)
+    on_error_mock = mocker.Mock(wrap=f2)
+    on_always_mock = mocker.Mock(wrap=f3)
+
     with f:
         f.index(np.random.random([10, 10]),
-                output_fn=f1, on_error=f2, on_always=f3)
+                output_fn=response_mock, on_error=on_error_mock, on_always=on_always_mock)
 
     assert hit == ['error', 'always']
+
+    response_mock.assert_not_called()
+    on_error_mock.assert_called()
+    on_always_mock.assert_called()
 
     hit.clear()
